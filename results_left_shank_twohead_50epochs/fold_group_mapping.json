@@ -1,0 +1,32 @@
+[
+  {
+    "fold": 1,
+    "held_out_groups": [
+      "block_3"
+    ]
+  },
+  {
+    "fold": 2,
+    "held_out_groups": [
+      "block_2"
+    ]
+  },
+  {
+    "fold": 3,
+    "held_out_groups": [
+      "block_1"
+    ]
+  },
+  {
+    "fold": 4,
+    "held_out_groups": [
+      "block_4"
+    ]
+  },
+  {
+    "fold": 5,
+    "held_out_groups": [
+      "block_0"
+    ]
+  }
+]

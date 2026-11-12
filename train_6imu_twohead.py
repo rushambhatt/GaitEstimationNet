@@ -61,6 +61,7 @@ class TwoHeadGaitCNN(nn.Module):
 
 def collect_windows(paths, split_mode, n_folds):
     windows, lefts, rights, groups, metadata = [], [], [], [], []
+    recordings = []  # raw per-file samples and split bounds for dense held-out predictions
     if split_mode == "recordings" and len(paths) < n_folds:
         raise ValueError(f"Recording-level {n_folds}-fold CV requires >= {n_folds} independent recording CSVs. Found {len(paths)}.")
     for recording_idx, filename in enumerate(paths):
@@ -76,6 +77,10 @@ def collect_windows(paths, split_mode, n_folds):
         segments = [(0, n, f"recording_{recording_idx}")] if split_mode == "recordings" else [
             (int(a), int(b), f"block_{i}") for i, (a, b) in enumerate(zip(np.linspace(0,n,n_folds+1,dtype=int)[:-1],np.linspace(0,n,n_folds+1,dtype=int)[1:]))
         ]
+        timestamps = (pd.to_numeric(df["time_s"], errors="coerce").to_numpy(dtype=float)
+                      if "time_s" in df.columns else np.full(n, np.nan))
+        recordings.append({"file": Path(filename).name, "signals": signals,
+                           "labels": labels, "time_s": timestamps, "segments": segments})
         accepted = 0
         for a,b,group in segments:
             for start in range(a, b-WINDOW+1, STEP):
@@ -99,7 +104,7 @@ def collect_windows(paths, split_mode, n_folds):
     X=np.stack(windows).astype(np.float32)
     y_left=np.asarray(lefts,dtype=np.int64)
     y_right=np.asarray(rights,dtype=np.int64)
-    return X,y_left,y_right,np.asarray(groups),metadata
+    return X,y_left,y_right,np.asarray(groups),metadata,recordings
 
 
 def normalize_train_only(X, train_idx, test_idx):
@@ -123,6 +128,40 @@ def evaluate(model, X_test, yl, yr, batch_size, device):
     return np.asarray(lpred),np.asarray(rpred)
 
 
+def predict_dense(model, signals, a, b, mean, std, device, batch=2048):
+    """Stride-1 predictions strictly INSIDE the held-out raw block [a,b).
+
+    Does not materialize all windows or duplicate a huge normalized recording.
+    Windows ending on invalid-label rows are predicted; invalid-label rows
+    remain -1 in the exported truth. Nonfinite IMU windows are skipped.
+    """
+    if b - a < WINDOW:
+        return np.empty(0, dtype=np.int64), np.empty(0), np.empty(0)
+    samples = torch.from_numpy(np.ascontiguousarray(signals[a:b].T))  # (C, N)
+    windows = samples.unfold(1, WINDOW, 1).permute(1, 0, 2)  # view (n, C, W)
+    # Efficient window-validity mask from per-row nonfinite counts.
+    valid_row = np.isfinite(signals[a:b]).all(axis=1)
+    bad = (~valid_row).astype(np.int64)
+    cumulative = np.concatenate(([0], np.cumsum(bad)))
+    valid_start_indices = np.flatnonzero(cumulative[WINDOW:] == cumulative[:-WINDOW])
+    if len(valid_start_indices) == 0:
+        return np.empty(0, dtype=np.int64), np.empty(0), np.empty(0)
+    mu = torch.as_tensor(mean.reshape(1, -1, 1), dtype=torch.float32, device=device)
+    sd = torch.as_tensor(std.reshape(1, -1, 1), dtype=torch.float32, device=device)
+    probabilities_l, probabilities_r = [], []
+    model.eval()
+    with torch.inference_mode():
+        for i in range(0, len(valid_start_indices), batch):
+            ids = torch.from_numpy(valid_start_indices[i:i+batch].astype(np.int64))
+            xb = windows.index_select(0, ids).to(device=device, dtype=torch.float32)
+            xb = (xb - mu) / sd
+            left_logits, right_logits = model(xb)
+            probabilities_l.append(torch.softmax(left_logits, dim=1)[:, 1].cpu().numpy())
+            probabilities_r.append(torch.softmax(right_logits, dim=1)[:, 1].cpu().numpy())
+    end_rows = a + valid_start_indices + WINDOW - 1
+    return end_rows, np.concatenate(probabilities_l), np.concatenate(probabilities_r)
+
+
 def run_training(data_paths, output_dir="results_6imu", epochs=50, batch_size=32,
                  learning_rate=0.001, n_folds=5, split_mode="auto", seed=SEED):
     set_seed(seed)
@@ -135,7 +174,7 @@ def run_training(data_paths, output_dir="results_6imu", epochs=50, batch_size=32
         warnings.warn("Using contiguous blocks of each recording for cross-validation. "
                       "This avoids overlapping windows across folds but does NOT evaluate unseen subjects or independent trials. "
                       "Use >=5 independent recordings with --split-mode recordings for a stronger test.")
-    X, yl, yr, groups, metadata=collect_windows(paths,split_mode,n_folds)
+    X, yl, yr, groups, metadata, recordings=collect_windows(paths,split_mode,n_folds)
     print(f"Mode={MODE}; shape={X.shape}; CV={split_mode}; groups={np.unique(groups).tolist()}")
     output=Path(output_dir);output.mkdir(parents=True,exist_ok=True)
     device=torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -143,9 +182,12 @@ def run_training(data_paths, output_dir="results_6imu", epochs=50, batch_size=32
     if len(np.unique(groups)) < n_folds:
         raise ValueError(f"Only {len(np.unique(groups))} folds have valid labeled windows, but {n_folds} were requested. Supply longer/better labeled recordings or reduce --folds.")
     cv=GroupKFold(n_splits=n_folds)
-    predictions=[]; fold_results=[]
+    predictions=[]; fold_results=[]; dense_parts=[]; fold_mapping=[]
     for fold,(tr,te) in enumerate(cv.split(X, yl, groups=groups),1):
-        print(f"\nFold {fold}/{n_folds}: training={len(tr)}, testing={len(te)}")
+        test_groups = sorted(set(groups[te]))
+        print(f"\nFold {fold}/{n_folds}: training={len(tr)}, testing={len(te)}, "
+              f"held-out groups={test_groups}")
+        fold_mapping.append({"fold": fold, "held_out_groups": test_groups})
         set_seed(seed+fold)
         Xtr,Xte,mean,std=normalize_train_only(X,tr,te)
         model=TwoHeadGaitCNN(len(FEATURES)).to(device)
@@ -176,13 +218,42 @@ def run_training(data_paths, output_dir="results_6imu", epochs=50, batch_size=32
         fold_results.append(metrics)
         print("Metrics:",metrics)
         (output/f"fold_{fold}_history.json").write_text(json.dumps(history,indent=2))
-        torch.save({"model_state_dict":model.state_dict(),"features":FEATURES,"mean":mean,"std":std,
+        torch.save({"model_state_dict":model.state_dict(),"features":FEATURES,
+                    "mean":torch.from_numpy(mean.copy()),"std":torch.from_numpy(std.copy()),
                     "config":{"mode":MODE,"window":WINDOW,"step":STEP,"epochs":epochs}},output/f"fold_{fold}_model.pt")
         for j,global_idx in enumerate(te):
             file,row,t=metadata[global_idx]
             predictions.append({"file":file,"window_end_row":row,"time_s":t,"fold":fold,
                                 "L_true":int(yl[global_idx]),"L_pred":int(lp[j]),
                                 "R_true":int(yr[global_idx]),"R_pred":int(rp[j])})
+        # Dense inference is a SECOND evaluation pass, not additional training.
+        # This preserves the original stride-15 CV metrics and output format.
+        for recording in recordings:
+            for a, b, group in recording["segments"]:
+                if group not in test_groups:
+                    continue
+                end_rows, left_prob, right_prob = predict_dense(
+                    model, recording["signals"], a, b, mean, std, device)
+                if len(end_rows) == 0:
+                    continue
+                targets = recording["labels"][end_rows]
+                true_left = np.where(np.isin(targets[:, 0], [0, 1]), targets[:, 0], -1).astype(int)
+                true_right = np.where(np.isin(targets[:, 1], [0, 1]), targets[:, 1], -1).astype(int)
+                dense_parts.append(pd.DataFrame({
+                    "file": recording["file"], "row": end_rows, "time_s": recording["time_s"][end_rows],
+                    "fold": fold, "L_true": true_left, "R_true": true_right,
+                    "L_prob_stance": left_prob, "R_prob_stance": right_prob,
+                    "L_pred": (left_prob >= 0.5).astype(int),
+                    "R_pred": (right_prob >= 0.5).astype(int),
+                }))
+        print(f"  Dense held-out evaluation finished for groups {test_groups}")
+    dense_cols = ["file", "row", "time_s", "fold", "L_true", "R_true",
+                  "L_prob_stance", "R_prob_stance", "L_pred", "R_pred"]
+    dense_df = pd.concat(dense_parts, ignore_index=True) if dense_parts else pd.DataFrame(columns=dense_cols)
+    dense_df = dense_df.sort_values(["file", "row"]).reset_index(drop=True)
+    dense_df.to_csv(output / "dense_predictions.csv", index=False, columns=dense_cols)
+    (output / "fold_group_mapping.json").write_text(json.dumps(fold_mapping, indent=2))
+    print(f"Saved {len(dense_df):,} dense predictions to", output / "dense_predictions.csv")
     pdf=pd.DataFrame(predictions)
     pdf.to_csv(output/"cv_predictions.csv",index=False)
     pd.DataFrame(fold_results).to_csv(output/"fold_metrics.csv",index=False)

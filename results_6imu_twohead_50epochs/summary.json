@@ -1,0 +1,85 @@
+{
+  "mode": "6imu",
+  "n_channels": 36,
+  "number_of_windows": 4468,
+  "epochs": 50,
+  "batch_size": 32,
+  "learning_rate": 0.001,
+  "split_mode": "blocks",
+  "n_folds": 5,
+  "recording_files": [
+    "/home/rusham/Downloads/gait_labels_20261030/20261030_0_5mph_labeled.csv",
+    "/home/rusham/Downloads/gait_labels_20261030/20261030_1_0mph_labeled.csv",
+    "/home/rusham/Downloads/gait_labels_20261030/20261030_1_5mph_labeled.csv",
+    "/home/rusham/Downloads/gait_labels_20261030/20261030_2_0mph_labeled.csv"
+  ],
+  "overall_left_accuracy": 0.9740376007162042,
+  "overall_right_accuracy": 0.970680393912265,
+  "left_confusion_matrix_0_swing_1_stance": [
+    [
+      1739,
+      55
+    ],
+    [
+      61,
+      2613
+    ]
+  ],
+  "right_confusion_matrix_0_swing_1_stance": [
+    [
+      1765,
+      63
+    ],
+    [
+      68,
+      2572
+    ]
+  ],
+  "folds": [
+    {
+      "fold": 1,
+      "n_train": 3496,
+      "n_test": 972,
+      "left_accuracy": 0.9619341563786008,
+      "right_accuracy": 0.9763374485596708,
+      "left_macro_f1": 0.9598590535335396,
+      "right_macro_f1": 0.9755817039723967
+    },
+    {
+      "fold": 2,
+      "n_train": 3511,
+      "n_test": 957,
+      "left_accuracy": 0.9780564263322884,
+      "right_accuracy": 0.9759665621734587,
+      "left_macro_f1": 0.9773414254934613,
+      "right_macro_f1": 0.9752394108574919
+    },
+    {
+      "fold": 3,
+      "n_train": 3527,
+      "n_test": 941,
+      "left_accuracy": 0.9808714133900106,
+      "right_accuracy": 0.9691817215727949,
+      "left_macro_f1": 0.9802493493409453,
+      "right_macro_f1": 0.9680112439498711
+    },
+    {
+      "fold": 4,
+      "n_train": 3657,
+      "n_test": 811,
+      "left_accuracy": 0.9815043156596794,
+      "right_accuracy": 0.9753390875462392,
+      "left_macro_f1": 0.9805901921834239,
+      "right_macro_f1": 0.9748149160290172
+    },
+    {
+      "fold": 5,
+      "n_train": 3681,
+      "n_test": 787,
+      "left_accuracy": 0.9682337992376112,
+      "right_accuracy": 0.9542566709021602,
+      "left_macro_f1": 0.9671957036792498,
+      "right_macro_f1": 0.9518772165830989
+    }
+  ]
+}
