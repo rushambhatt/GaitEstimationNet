@@ -19,10 +19,14 @@ Standing period and IMU calibration:
     period (STATIC_WIN_S long, ending at least 1 s before walking starts) and, per sensor:
       1. gyro bias  = mean gyro while still            -> subtracted (true rate is 0 when still)
       2. acc scale  = 1 / |mean acc while still|        -> |acc| = 1 g when still
-      3. tilt       = smallest rotation taking the still gravity vector onto the sensor's vertical
-                      axis (default: the axis closest to gravity, e.g. +y on the shanks/thighs/torso,
-                      +z on the foot; use --vertical-axis z to force +z on every sensor). The same
-                      rotation is applied to the gyro so acc and gyro stay in one frame.
+      3. tilt       = smallest rotation taking the still gravity vector onto the nearest sensor axis.
+      4. mount      = (default --vertical-axis canonical) if that axis is not the location's canonical axis
+                      (+y on shanks/thighs/torso, +z on the feet), the sensor was strapped on turned in the
+                      skin plane: turn it about its z (skin-normal) axis onto the canonical axis. Foot sensors
+                      whose dorsum slope reads backwards are turned 180 deg about z. --mount-yaw adds a
+                      manual turn about z for a sensor turned about the vertical (not visible when still).
+                      --vertical-axis nearest = old behaviour (no step 4); z = force +z on every sensor.
+      The same rotation is applied to the gyro so acc and gyro stay in one frame.
     After calibration a still sensor reads acc = (0, 1, 0) or (0, 0, 1) g and gyro = (0, 0, 0) deg/s.
     The standing period is then removed: the CSV starts at walking onset (time_s = 0).
     The calibration (bias, scale, rotation matrix) is saved per trial in <trial>_imu_calibration.json so the
@@ -36,7 +40,8 @@ Usage:
     python label_gait.py *.xdf --out out --trim 20261030_2_0mph=15:135
          (--trim NAME=START:END restricts labeling to START..END seconds of that trial, measured from
           walking onset; NAME is matched as a substring of the file name. Rows outside are unlabeled.)
-    --vertical-axis z      force gravity onto +z for every sensor (default: nearest axis)
+    --vertical-axis MODE   canonical (default) | nearest (old behaviour) | z (force +z on every sensor)
+    --mount-yaw NAME:Sensor=DEG   extra turn about a sensor's z axis for trials whose name contains NAME
     --no-imu-cal           skip the calibration (raw IMU values)
     --keep-static          keep the standing period in the CSV (unlabeled)
 
@@ -70,6 +75,19 @@ WALK_GYRO_DPS = 30.0       # walking onset: smoothed max |gyro| (bias-removed) o
 WALK_ACTIVE_FRAC = 0.3     # ...and stays above it for at least this fraction of the next 3 s
 STATIC_WIN_S = 4.0         # length of the still window used for calibration (shorter if standing was shorter)
 STATIC_MARGIN_S = 1.0      # the still window ends at least this long before walking onset
+
+# Canonical sensor frame (--vertical-axis canonical, the default). Every subject's data is rotated into
+# the same frame so a model trained on one subject sees the same axes on another.
+#   * Segment sensors (shanks, thighs, torso): +y along the segment (gravity when standing), z out of the skin.
+#   * Foot sensors: +z vertical (gravity when standing), z out of the skin; the dorsum slopes so that
+#     standing gravity has a POSITIVE y component (verified on Subject 1 and both Chethan feet).
+# A sensor strapped on turned within the skin plane (e.g. Chethan 11/12: LeftThigh gravity on +x,
+# RightThigh on -y, Torso on -x) is turned back about its z axis onto the canonical axis.
+CANONICAL_AXIS = {"LeftShank": "+y", "RightShank": "+y", "LeftThigh": "+y", "RightThigh": "+y",
+                  "Torso": "+y", "LeftFoot": "+z", "RightFoot": "+z"}
+MOUNT_NORMAL = 2           # index of the sensor axis that points out of the skin (Trigno: z)
+FOOT_SLOPE_AXIS = 1        # foot sensors: standing gravity should have a positive component on this axis (y)
+FOOT_SLOPE_MIN = 0.10      # |component| below this (< ~6 deg) is too small to judge -> no automatic turn
 
 
 # ----------------------------------------------------------------------------- IMU calibration
@@ -113,10 +131,40 @@ def rot_between(u, v):
     return np.eye(3) + np.sin(th) * K + (1 - np.cos(th)) * K @ K
 
 
-def calibrate_imu(imu, locs, mask, vertical="nearest"):
+def axis_vec(spec):
+    """'+y' -> (0, 1, 0), '-x' -> (-1, 0, 0)."""
+    e = np.zeros(3); e["xyz".index(spec[1])] = 1.0 if spec[0] == "+" else -1.0
+    return e
+
+
+def rot_about(axis_i, deg):
+    """Rotation by deg about sensor axis axis_i (0 = x, 1 = y, 2 = z)."""
+    c, s = np.cos(np.radians(deg)), np.sin(np.radians(deg))
+    j, k = (axis_i + 1) % 3, (axis_i + 2) % 3     # right-handed (x->y->z)
+    R = np.eye(3); R[j, j] = c; R[j, k] = -s; R[k, j] = s; R[k, k] = c
+    return R
+
+
+def mount_turn(e_from, e_to, n_i=MOUNT_NORMAL):
+    """Rotation about the skin-normal axis taking unit axis e_from onto e_to (both in the skin plane)."""
+    if np.allclose(e_from, e_to):
+        return np.eye(3), 0.0
+    if np.allclose(e_from, -e_to):
+        return rot_about(n_i, 180.0), 180.0
+    R = rot_between(e_from, e_to)            # axis = e_from x e_to = +/- skin normal
+    return R, float(np.degrees(np.arctan2(R[1, 0], R[0, 0]))) if n_i == 2 else float("nan")
+
+
+def calibrate_imu(imu, locs, mask, vertical="canonical", yaw_override=None):
     """Per-sensor gyro bias removal, accelerometer scale to 1 g, and tilt alignment from a still window.
+    vertical = "canonical": tilt onto the nearest axis, then turn the sensor about its skin normal so the
+               vertical lands on CANONICAL_AXIS[loc] (fixes sensors strapped on rotated in the skin plane);
+               foot sensors whose dorsum slope reads backwards are turned 180 deg about z.
+    vertical = "nearest" (old behaviour) or "z" (force +z on every sensor).
+    yaw_override = {loc: deg}: extra rotation about the skin normal applied last (manual fix for a
+               sensor turned about the vertical, which a still window cannot detect).
     Returns calibrated copy and a dict of parameters + before/after checks."""
-    out = imu.copy(); cal = {}
+    out = imu.copy(); cal = {}; yaw_override = yaw_override or {}
     for i, loc in enumerate(locs):
         A = imu[mask, 6 * i:6 * i + 3]; G = imu[mask, 6 * i + 3:6 * i + 6]
         g0 = A.mean(0); mag = float(np.linalg.norm(g0)); u = g0 / mag
@@ -126,12 +174,38 @@ def calibrate_imu(imu, locs, mask, vertical="nearest"):
         else:
             ax_i = int(np.argmax(np.abs(u))); sign = float(np.sign(u[ax_i]))
         e = np.zeros(3); e[ax_i] = sign
-        R = rot_between(u, e)
+        nearest = ("+" if sign > 0 else "-") + "xyz"[ax_i]
+        R = rot_between(u, e)                                   # small tilt onto the nearest axis
+        mount_deg, notes, final = 0.0, [], nearest
+        if vertical == "canonical" and loc in CANONICAL_AXIS:
+            target = CANONICAL_AXIS[loc]; e_t = axis_vec(target)
+            if nearest != target:
+                if ax_i == MOUNT_NORMAL or e_t[MOUNT_NORMAL] != 0:
+                    notes.append(f"WARNING: gravity on {nearest}, expected {target}; this is not a turn in the "
+                                 f"skin plane, so no automatic fix was applied - check how the sensor was mounted")
+                else:
+                    P, mount_deg = mount_turn(e, e_t); R = P @ R; final = target
+                    notes.append(f"sensor mounted turned in the skin plane (gravity on {nearest}); "
+                                 f"turned {mount_deg:+.0f} deg about z onto {target}")
+            if target[1] == "z" and final == target:               # foot: check the dorsum slope direction
+                slope = u[FOOT_SLOPE_AXIS]                       # raw standing gravity, sensor frame
+                if slope < -FOOT_SLOPE_MIN:
+                    R = rot_about(MOUNT_NORMAL, 180.0) @ R; mount_deg += 180.0
+                    notes.append(f"foot slope reads backwards (standing gravity y = {slope:+.2f}); "
+                                 f"sensor turned 180 deg about z")
+                elif abs(slope) <= FOOT_SLOPE_MIN:
+                    notes.append(f"foot slope too small to check direction (y = {slope:+.2f})")
+        if loc in yaw_override:
+            R = rot_about(MOUNT_NORMAL, yaw_override[loc]) @ R; mount_deg += yaw_override[loc]
+            notes.append(f"manual turn {yaw_override[loc]:+.0f} deg about z (--mount-yaw)")
         acc = (imu[:, 6 * i:6 * i + 3] / mag) @ R.T
         gyr = (imu[:, 6 * i + 3:6 * i + 6] - bias) @ R.T
         out[:, 6 * i:6 * i + 3] = acc; out[:, 6 * i + 3:6 * i + 6] = gyr
         cal[loc] = {
-            "vertical_axis": ("+" if sign > 0 else "-") + "xyz"[ax_i],
+            "vertical_axis": final,
+            "nearest_axis_raw": nearest,
+            "mount_turn_deg": round(mount_deg, 1),
+            "notes": notes,
             "gyro_bias_dps": np.round(bias, 3).tolist(),
             "acc_scale": round(1 / mag, 5),
             "tilt_correction_deg": round(float(np.degrees(np.arccos(np.clip(np.dot(u, e), -1, 1)))), 2),
@@ -345,8 +419,27 @@ def label_leg(t, strides):
     return stance, pct, hs_f, to_f
 
 
+def walking_gyro_check(imu, locs, t, legs):
+    """Cross-subject orientation check from walking data (a still window cannot see a sensor turned about
+    the vertical). For each sensor: the gyro axis with the largest SD during labeled walking, the SD
+    of each axis, and the mean of that axis during the same-side leg's swing. After calibration these
+    should match across subjects: same dominant axis and same swing sign. Compare them in QC_summary.md."""
+    out = {}
+    L_st, _, _, _ = label_leg(t, legs["L"]); R_st, _, _, _ = label_leg(t, legs["R"])
+    for i, loc in enumerate(locs):
+        st = R_st if loc.startswith("Right") else L_st
+        walk = st >= 0
+        if walk.sum() < 100:
+            continue
+        g = imu[walk, 6 * i + 3:6 * i + 6]; sd = g.std(0); j = int(np.argmax(sd))
+        sw = imu[(st == 0), 6 * i + 3 + j]
+        out[loc] = {"dominant_gyro_axis": "xyz"[j], "gyro_sd_dps_xyz": np.round(sd, 1).tolist(),
+                    "swing_mean_dps_on_dominant": round(float(sw.mean()), 1) if len(sw) else None}
+    return out
+
+
 # ----------------------------------------------------------------------------- main per-trial routine
-def process(fn, outdir, trim=None, vertical="nearest", do_cal=True, keep_static=False):
+def process(fn, outdir, trim=None, vertical="canonical", do_cal=True, keep_static=False, yaw_override=None):
     name = os.path.splitext(os.path.basename(fn))[0]
     S = load_xdf(fn)
     imus = [s for s in S.values() if s["type"] == "IMU"]
@@ -388,12 +481,16 @@ def process(fn, outdir, trim=None, vertical="nearest", do_cal=True, keep_static=
     qc["recording_start_to_walking_onset_s"] = round(onset - t_imu[0], 2)
     qc["static_window_s_from_recording_start"] = [round(float(sw[0] - t_imu[0]), 2), round(float(sw[1] - t_imu[0]), 2)] if sw else None
     if do_cal and sw:
-        imu, cal = calibrate_imu(imu, locs, (t_imu >= sw[0]) & (t_imu <= sw[1]), vertical)
+        imu, cal = calibrate_imu(imu, locs, (t_imu >= sw[0]) & (t_imu <= sw[1]), vertical, yaw_override)
         qc["imu_calibration"] = cal
+        for loc, c in cal.items():
+            for note in c["notes"]:
+                print(f"  {name} {loc}: {note}")
         with open(os.path.join(outdir, f"{name}_imu_calibration.json"), "w") as f:
             json.dump({"trial": name, "static_window_lsl_time": [float(x) for x in sw], "vertical_axis_mode": vertical,
                        "apply_as": "acc_cal = R @ (acc * acc_scale);  gyr_cal = R @ (gyr - gyro_bias_dps)",
-                       "sensors": {k: {kk: v[kk] for kk in ("vertical_axis", "gyro_bias_dps", "acc_scale",
+                       "sensors": {k: {kk: v[kk] for kk in ("vertical_axis", "nearest_axis_raw", "mount_turn_deg",
+                                                             "notes", "gyro_bias_dps", "acc_scale",
                                                              "rotation_matrix", "tilt_correction_deg")}
                                    for k, v in cal.items()}}, f, indent=2)
     else:
@@ -461,6 +558,7 @@ def process(fn, outdir, trim=None, vertical="nearest", do_cal=True, keep_static=
             if (stc == 1).any() and (stc == 0).any():
                 chk[f"{foot}_shank_gyro_swing/stance_ratio"] = round(float(g[stc == 0].mean() / g[stc == 1].mean()), 2)
     qc["side_check"] = chk
+    qc["walking_gyro_check"] = walking_gyro_check(imu, locs, t_imu, legs)
     qc["side_check_note"] = "ratio > 1 means that foot's FSR stance matches its own shank IMU (expected ~2-4)"
 
     # --- labels on IMU time
@@ -553,19 +651,30 @@ def summary_md(qcs, path):
     L.append("\n## Left/right check (shank |gyro| swing/stance ratio, expected > 1)\n")
     for q in qcs:
         L.append(f"- {q['trial']}: {q['side_check']}")
+    L.append("\n## Walking gyro orientation check (should match across subjects for each sensor)\n")
+    L.append("Dominant gyro axis during walking and its mean during that side's swing. A different axis or an "
+             "opposite swing sign for one subject means that sensor is turned differently (fix with --mount-yaw).\n")
+    L.append("| trial | sensor | dominant axis | gyro SD x/y/z (deg/s) | swing mean on dominant (deg/s) |")
+    L.append("|---|---|---|---|---|")
+    for q in qcs:
+        for j, (loc, c) in enumerate(q.get("walking_gyro_check", {}).items()):
+            L.append(f"| {q['trial'] if j == 0 else ''} | {loc} | {c['dominant_gyro_axis']} | {c['gyro_sd_dps_xyz']} | "
+                     f"{c['swing_mean_dps_on_dominant']} |")
     L.append("\n## Standing period and IMU calibration\n")
     L.append("Standing period removed: each CSV starts at walking onset (time_s = 0). Calibration uses the quietest "
              "window of the standing period. 'before' is the raw still reading, 'after' the calibrated one.\n")
-    L.append("| trial | sensor | vertical axis | gyro bias (deg/s) | still acc before (g) | |acc| before | tilt fix (deg) | still acc after (g) | still gyro after (deg/s) |")
-    L.append("|---|---|---|---|---|---|---|---|---|")
+    L.append("| trial | sensor | vertical axis (raw nearest) | mount turn (deg) | gyro bias (deg/s) | still acc before (g) | |acc| before | tilt fix (deg) | still acc after (g) | still gyro after (deg/s) | notes |")
+    L.append("|---|---|---|---|---|---|---|---|---|---|---|")
     for q in qcs:
         cal = q.get("imu_calibration")
         hdr = f"{q['trial']} (onset {q['recording_start_to_walking_onset_s']} s, still window {q['static_window_s_from_recording_start']} s)"
         if not isinstance(cal, dict):
-            L.append(f"| {hdr} | - | {cal} | | | | | | |"); continue
+            L.append(f"| {hdr} | - | {cal} | | | | | | | | |"); continue
         for j, (loc, c) in enumerate(cal.items()):
-            L.append(f"| {hdr if j == 0 else ''} | {loc} | {c['vertical_axis']} | {c['gyro_bias_dps']} | {c['static_acc_before_g']} | "
-                     f"{c['static_acc_mag_before_g']} | {c['tilt_correction_deg']} | {c['static_acc_after_g']} | {c['static_gyro_after_dps']} |")
+            L.append(f"| {hdr if j == 0 else ''} | {loc} | {c['vertical_axis']} ({c['nearest_axis_raw']}) | {c['mount_turn_deg']} | "
+                     f"{c['gyro_bias_dps']} | {c['static_acc_before_g']} | "
+                     f"{c['static_acc_mag_before_g']} | {c['tilt_correction_deg']} | {c['static_acc_after_g']} | "
+                     f"{c['static_gyro_after_dps']} | {'; '.join(c['notes'])} |")
     open(path, "w").write("\n".join(L) + "\n")
 
 
@@ -574,7 +683,9 @@ def main():
     ap.add_argument("files", nargs="*", help=".xdf files or wildcards; default: every .xdf in this script's folder")
     ap.add_argument("--out", default=None, help="output folder (default: labeled_output next to the .xdf files)")
     ap.add_argument("--trim", action="append", default=[], help="NAME=START:END in seconds (repeatable)")
-    ap.add_argument("--vertical-axis", choices=["nearest", "z"], default="nearest")
+    ap.add_argument("--vertical-axis", choices=["canonical", "nearest", "z"], default="canonical")
+    ap.add_argument("--mount-yaw", action="append", default=[],
+                    help="NAME:Sensor=DEG extra turn about the sensor z axis, e.g. 20261110:RightFoot=180 (repeatable)")
     ap.add_argument("--no-imu-cal", action="store_true")
     ap.add_argument("--keep-static", action="store_true")
     a = ap.parse_args()
@@ -596,11 +707,15 @@ def main():
     trims = {}
     for t in a.trim:
         k, v = t.split("="); s, e = v.split(":"); trims[k] = (float(s), float(e))
+    yaws = {}
+    for y in a.mount_yaw:
+        k, v = y.split("="); key, sens = k.split(":"); yaws[(key, sens)] = float(v)
     qcs = []
     for fn in files:
         trim = next((v for k, v in trims.items() if k in os.path.basename(fn)), None)
         try:
-            q = process(fn, out, trim, a.vertical_axis, not a.no_imu_cal, a.keep_static)
+            yaw = {sens: deg for (key, sens), deg in yaws.items() if key in os.path.basename(fn)}
+            q = process(fn, out, trim, a.vertical_axis, not a.no_imu_cal, a.keep_static, yaw)
         except Exception as e:                      # keep going if one file is bad
             print(f"{os.path.basename(fn)}: FAILED - {type(e).__name__}: {e}")
             continue
