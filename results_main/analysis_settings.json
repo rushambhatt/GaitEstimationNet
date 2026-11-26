@@ -1,0 +1,22 @@
+{
+  "configs": [
+    "LeftShank",
+    "RightFoot",
+    "LeftShank+RightShank",
+    "6IMU",
+    "7IMU"
+  ],
+  "epochs": 100,
+  "seeds": [
+    2001
+  ],
+  "batch_size": 32,
+  "learning_rate": 0.001,
+  "window": 148,
+  "step": 15,
+  "cuda_used": true,
+  "test_subject_excluded": null,
+  "comparison_subjects": null,
+  "matched_trials": false,
+  "note": "LOSO CV estimates, not untouched final-test results; comparison requires matching eligible subjects/trials."
+}

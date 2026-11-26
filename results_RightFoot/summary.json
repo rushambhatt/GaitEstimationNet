@@ -1,0 +1,105 @@
+{
+  "mode": "1imu",
+  "selected_features": [
+    "RightFoot_acc_x",
+    "RightFoot_acc_y",
+    "RightFoot_acc_z",
+    "RightFoot_gyr_x",
+    "RightFoot_gyr_y",
+    "RightFoot_gyr_z"
+  ],
+  "n_channels": 6,
+  "number_of_windows": 12657,
+  "epochs": 100,
+  "batch_size": 32,
+  "learning_rate": 0.001,
+  "split_mode": "subjects",
+  "n_folds": 5,
+  "device": "cuda",
+  "recording_files": [
+    "C:\\Users\\rrbhat\\Documents\\Gait-Estimation\\Labeled_Data\\20261030_0_5mph_Rusham_labeled.csv",
+    "C:\\Users\\rrbhat\\Documents\\Gait-Estimation\\Labeled_Data\\20261030_1_0mph_Rusham_labeled.csv",
+    "C:\\Users\\rrbhat\\Documents\\Gait-Estimation\\Labeled_Data\\20261030_1_5mph_Rusham_labeled.csv",
+    "C:\\Users\\rrbhat\\Documents\\Gait-Estimation\\Labeled_Data\\20261030_2_0mph_Rusham_labeled.csv",
+    "C:\\Users\\rrbhat\\Documents\\Gait-Estimation\\Labeled_Data\\20261110_0_5mph_Vishnu_labeled.csv",
+    "C:\\Users\\rrbhat\\Documents\\Gait-Estimation\\Labeled_Data\\20261110_1_5mph_Vishnu_labeled.csv",
+    "C:\\Users\\rrbhat\\Documents\\Gait-Estimation\\Labeled_Data\\20261112_0_5mph_Chethan_labeled.csv",
+    "C:\\Users\\rrbhat\\Documents\\Gait-Estimation\\Labeled_Data\\20261112_1_0_Chethan_labeled.csv",
+    "C:\\Users\\rrbhat\\Documents\\Gait-Estimation\\Labeled_Data\\20261112_1_5_Chethan_labeled.csv",
+    "C:\\Users\\rrbhat\\Documents\\Gait-Estimation\\Labeled_Data\\sub-P001-Bailey_ses-S001_task-Default_run-001_eeg_Bailey_labeled.csv",
+    "C:\\Users\\rrbhat\\Documents\\Gait-Estimation\\Labeled_Data\\sub-P001-Bailey_ses-S002.1_task-Default_run-001_eeg_Bailey_labeled.csv",
+    "C:\\Users\\rrbhat\\Documents\\Gait-Estimation\\Labeled_Data\\sub-P001-Bailey_ses-S002_task-Default_run-001_eeg_Bailey_labeled.csv",
+    "C:\\Users\\rrbhat\\Documents\\Gait-Estimation\\Labeled_Data\\sub-P001-DR.SON_ses-S001.1_task-Default_run-001_eeg_Son_labeled.csv",
+    "C:\\Users\\rrbhat\\Documents\\Gait-Estimation\\Labeled_Data\\sub-P001-DR.SON_ses-S002.1_task-Default_run-001_eeg_Son_labeled.csv",
+    "C:\\Users\\rrbhat\\Documents\\Gait-Estimation\\Labeled_Data\\sub-P001-DR.SON_ses-S003.1_task-Default_run-001_eeg_Son_labeled.csv"
+  ],
+  "overall_left_accuracy": 0.8899423244054673,
+  "overall_right_accuracy": 0.8822785810223591,
+  "left_confusion_matrix_0_swing_1_stance": [
+    [
+      3977,
+      615
+    ],
+    [
+      778,
+      7287
+    ]
+  ],
+  "right_confusion_matrix_0_swing_1_stance": [
+    [
+      4075,
+      769
+    ],
+    [
+      721,
+      7092
+    ]
+  ],
+  "folds": [
+    {
+      "fold": 1,
+      "n_train": 8046,
+      "n_test": 4611,
+      "left_accuracy": 0.895467360659293,
+      "right_accuracy": 0.8906961613532857,
+      "left_macro_f1": 0.8871615611444168,
+      "right_macro_f1": 0.8889080101740534
+    },
+    {
+      "fold": 2,
+      "n_train": 8782,
+      "n_test": 3875,
+      "left_accuracy": 0.8756129032258064,
+      "right_accuracy": 0.8650322580645161,
+      "left_macro_f1": 0.8675333565582886,
+      "right_macro_f1": 0.8518471976138526
+    },
+    {
+      "fold": 3,
+      "n_train": 10001,
+      "n_test": 2656,
+      "left_accuracy": 0.8731174698795181,
+      "right_accuracy": 0.8840361445783133,
+      "left_macro_f1": 0.8647399324358529,
+      "right_macro_f1": 0.8692190372655912
+    },
+    {
+      "fold": 4,
+      "n_train": 11268,
+      "n_test": 1389,
+      "left_accuracy": 0.9380849532037437,
+      "right_accuracy": 0.8920086393088553,
+      "left_macro_f1": 0.9318216063193462,
+      "right_macro_f1": 0.8859156317760694
+    },
+    {
+      "fold": 5,
+      "n_train": 12531,
+      "n_test": 126,
+      "left_accuracy": 0.9523809523809523,
+      "right_accuracy": 0.9603174603174603,
+      "left_macro_f1": 0.9511501680020678,
+      "right_macro_f1": 0.9481694775812424
+    }
+  ]
+}

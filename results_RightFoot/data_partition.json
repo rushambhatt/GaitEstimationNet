@@ -1,0 +1,22 @@
+{
+  "split_mode": "subjects",
+  "development_files": [
+    "C:\\Users\\rrbhat\\Documents\\Gait-Estimation\\Labeled_Data\\20261030_0_5mph_Rusham_labeled.csv",
+    "C:\\Users\\rrbhat\\Documents\\Gait-Estimation\\Labeled_Data\\20261030_1_0mph_Rusham_labeled.csv",
+    "C:\\Users\\rrbhat\\Documents\\Gait-Estimation\\Labeled_Data\\20261030_1_5mph_Rusham_labeled.csv",
+    "C:\\Users\\rrbhat\\Documents\\Gait-Estimation\\Labeled_Data\\20261030_2_0mph_Rusham_labeled.csv",
+    "C:\\Users\\rrbhat\\Documents\\Gait-Estimation\\Labeled_Data\\20261110_0_5mph_Vishnu_labeled.csv",
+    "C:\\Users\\rrbhat\\Documents\\Gait-Estimation\\Labeled_Data\\20261110_1_5mph_Vishnu_labeled.csv",
+    "C:\\Users\\rrbhat\\Documents\\Gait-Estimation\\Labeled_Data\\20261112_0_5mph_Chethan_labeled.csv",
+    "C:\\Users\\rrbhat\\Documents\\Gait-Estimation\\Labeled_Data\\20261112_1_0_Chethan_labeled.csv",
+    "C:\\Users\\rrbhat\\Documents\\Gait-Estimation\\Labeled_Data\\20261112_1_5_Chethan_labeled.csv",
+    "C:\\Users\\rrbhat\\Documents\\Gait-Estimation\\Labeled_Data\\sub-P001-Bailey_ses-S001_task-Default_run-001_eeg_Bailey_labeled.csv",
+    "C:\\Users\\rrbhat\\Documents\\Gait-Estimation\\Labeled_Data\\sub-P001-Bailey_ses-S002.1_task-Default_run-001_eeg_Bailey_labeled.csv",
+    "C:\\Users\\rrbhat\\Documents\\Gait-Estimation\\Labeled_Data\\sub-P001-Bailey_ses-S002_task-Default_run-001_eeg_Bailey_labeled.csv",
+    "C:\\Users\\rrbhat\\Documents\\Gait-Estimation\\Labeled_Data\\sub-P001-DR.SON_ses-S001.1_task-Default_run-001_eeg_Son_labeled.csv",
+    "C:\\Users\\rrbhat\\Documents\\Gait-Estimation\\Labeled_Data\\sub-P001-DR.SON_ses-S002.1_task-Default_run-001_eeg_Son_labeled.csv",
+    "C:\\Users\\rrbhat\\Documents\\Gait-Estimation\\Labeled_Data\\sub-P001-DR.SON_ses-S003.1_task-Default_run-001_eeg_Son_labeled.csv"
+  ],
+  "test_subject": null,
+  "test_files": []
+}

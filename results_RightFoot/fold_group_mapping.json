@@ -1,0 +1,32 @@
+[
+  {
+    "fold": 1,
+    "held_out_groups": [
+      "subject_Rusham"
+    ]
+  },
+  {
+    "fold": 2,
+    "held_out_groups": [
+      "subject_Chethan"
+    ]
+  },
+  {
+    "fold": 3,
+    "held_out_groups": [
+      "subject_Vishnu"
+    ]
+  },
+  {
+    "fold": 4,
+    "held_out_groups": [
+      "subject_Bailey"
+    ]
+  },
+  {
+    "fold": 5,
+    "held_out_groups": [
+      "subject_Son"
+    ]
+  }
+]
